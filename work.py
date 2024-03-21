@@ -1,10 +1,7 @@
 import json
 import requests
-import yadisk
 from tqdm import tqdm
-import os
 from datetime import datetime, timezone
-import time
 
 
 class VK:
@@ -24,41 +21,35 @@ class VK:
             'photo_sizes': 1,
             'v': self.version
         }
-
         response = requests.get(url_get_photos, params=params)
         return response.json()
 
     def sizes_photos(self):
         data = self.get_photos()
         photos_list = []
-        count = 0
-        if not os.path.exists('VKphotos'):
-            os.mkdir('VKphotos')
-        for photo in tqdm(data.get('response').get('items')):
+        set_likes = set()
+        for photo in data.get('response').get('items'):
             sizes = photo.get('sizes')
             if sizes:
                 biggest_size = max(sizes, key=lambda size: size['width'] * size['height'])
                 max_size = biggest_size['url']
                 file_name = photo.get('likes').get('count')
                 photo_date = datetime.fromtimestamp(photo.get('date'), timezone.utc).strftime('%Y-%m-%d')
-                photo_id = photo.get('id')
-                name = f"{file_name}_{photo_date}_{photo_id}.jpg"
-                with open(f'VKphotos/{name}', 'wb') as file:
-                    response = requests.get(max_size)
-                    file.write(response.content)
-                    time.sleep(0.5)
-                    count += 1
-                    tqdm.write(f'Загружено {count} фото в папку VKphotos')
+                if file_name in set_likes:
+                    name = f'{file_name}_{photo_date}.jpg'
+                else:
+                    name = f'{file_name}.jpg'
+                    set_likes.add(file_name)
 
                 photos_list.append({'file_name': name,
-                                    'size': biggest_size['type']})
-                with open('Result_photo.json', 'w') as f:
-                    json.dump(photos_list, f, indent=4)
+                                    'size': biggest_size['type'],
+                                    'url': max_size})
+        return photos_list
 
 
 class YandexDisk:
-    def __init__(self, OAuth_token):
-        self.token = OAuth_token
+    def __init__(self, ya_token):
+        self.token = ya_token
 
     def create_folder(self):
         url_create_folder = f'{url_base}/v1/disk/resources'
@@ -66,38 +57,45 @@ class YandexDisk:
             'path': f'{folder_name}'
         }
         headers = {
-            'Authorization': ya_token
+            'Authorization': f'OAuth {ya_token}'
         }
-        response1 = requests.put(url_create_folder,
-                                 headers=headers,
-                                 params=params)
+        response = requests.put(url_create_folder, headers=headers, params=params)
+        return response.json()
 
-        return response1.json()
-
-    def upload(self, path_to_vkphoto):
-        for address, dirs, files in tqdm(os.walk(path_to_vkphoto)):
-            count = 0
-            for file in tqdm(files):
-                count += 1
-                y.upload(f'{address}/{file}', f'/{folder_name}/{file}')
-                print(f' Файл №{count}: {file} загружен на Яндекс Диск')
+    def upload(self, url, path_to_disk):
+        url_upload = f'{url_base}/v1/disk/resources/upload'
+        params = {
+            'path': path_to_disk,
+            'url': url,
+            'overwrite': True
+        }
+        headers = {
+            'Authorization': f'OAuth {ya_token}'
+        }
+        response = requests.post(url_upload, params=params, headers=headers)
+        return response.json()
 
 
 url_get_photos = 'https://api.vk.com/method/photos.get'
 access_token_vk = ' '
 user_id = input('Введите id пользователя VK: ')
 vk = VK(access_token_vk, user_id)
-vk.sizes_photos()
 
 url_base = 'https://cloud-api.yandex.net'
-
 ya_token = input('Введите OAuth token Яндекс Диска: ')
 disk = YandexDisk(ya_token)
-
 folder_name = input('Введите название папки(туда будут загружаться фото) на Яндекс Диске: ')
 disk.create_folder()
-path = os.getcwd()
-folder = 'VKphotos'
-path_to_vkphoto = os.path.join(path, folder)
-y = yadisk.YaDisk(token=f'{ya_token}')
-disk.upload(path_to_vkphoto)
+
+photos = vk.sizes_photos()
+photos_json = []
+count = 0
+for photo in tqdm(photos):
+    count += 1
+    disk.upload(photo['url'], f'/{folder_name}/{photo["file_name"]}')
+    print(f' Файл №{count}: {photo["file_name"]} загружен на Яндекс Диск')
+
+    photos_json.append({'file_name': photo['file_name'],
+                        'size': photo['size']})
+    with open('Result_photo1.json', 'w') as f:
+        json.dump(photos_json, f, indent=4)
